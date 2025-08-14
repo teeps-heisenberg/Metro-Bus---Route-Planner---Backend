@@ -54,6 +54,25 @@ async def health_check():
         "timestamp": datetime.now().isoformat()
     }
 
+@app.get("/check-routes-file")
+def check_routes_file():
+    json_file_path = os.path.join(os.path.dirname(__file__), "routes_analysis.json")
+
+    if not os.path.exists(json_file_path):
+        return {"exists": False, "message": "File not found."}
+
+    try:
+        size_bytes = os.path.getsize(json_file_path)
+        with open(json_file_path, "r", encoding="utf-8") as f:
+            content_preview = f.read(200)  # first 200 characters
+        return {
+            "exists": True,
+            "size_bytes": size_bytes,
+            "content_preview": content_preview
+        }
+    except Exception as e:
+        return {"exists": True, "error": str(e)}
+
 # Route planning endpoints
 @app.post("/plan-route", response_model=RoutePlanningResponse)
 async def plan_route(request: RoutePlanningRequest):
