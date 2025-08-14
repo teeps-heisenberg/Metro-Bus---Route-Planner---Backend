@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Tuple
 from models import Route, Trip, Stop, Direction
 
 class RouteParser:
-    def __init__(self, json_file_path: str = "../routes_analysis.json"):
+    def __init__(self, json_file_path: str = "routes_analysis.json"):
         self.json_file_path = json_file_path
         self.routes_cache: Dict[str, Route] = {}
         
