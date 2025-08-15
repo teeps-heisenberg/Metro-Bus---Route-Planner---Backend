@@ -11,6 +11,8 @@ class RoutePlanner:
         """Classify which metro line a route belongs to based on its short name."""
         if route_short_name.startswith('FRG-'):
             return 'GREEN'
+        elif route_short_name.startswith('ST-'):
+            return 'GREEN'  # ST routes serve Green Line stops
         elif route_short_name.startswith('FR-'):
             return 'BLUE'
         else:
@@ -54,17 +56,13 @@ class RoutePlanner:
         """Backwards-compatible: minutes forward from time1 -> time2 (wrap-safe)."""
         return self.minutes_forward(time1, time2)
     
-    def find_best_trip(self, route, origin: str, destination: str, 
-                   preferred_time: Optional[time] = None) -> Optional[Tuple[Trip, Stop, Stop]]:
-        """Find the best trip for a given route and stops."""
-        best_trip = None
-        best_origin_stop = None
-        best_destination_stop = None
+    def find_best_trips(self, route, origin: str, destination: str, 
+                   preferred_time: Optional[time] = None, max_trips: int = 3) -> List[Tuple[Trip, Stop, Stop]]:
+        """Find the best trips for a given route and stops (returns multiple options)."""
+        trip_options = []
 
-        # Use tuple scoring:
-        # If preferred_time: (abs_minutes_to_preferred, journey_minutes)
-        # Else: (pseudo_wait_from_06_00, journey_minutes)
-        best_score: Tuple[int, int] = (float('inf'), float('inf'))
+        # Import stops_db for name mapping
+        from stops_database import stops_db
         
         for trip in route.trips:
             origin_stop = None
@@ -72,10 +70,24 @@ class RoutePlanner:
             
             # Find origin and destination stops in this trip
             for stop in trip.stops:
+                # Try exact match first
                 if stop.name.lower() == origin.lower():
                     origin_stop = stop
                 elif stop.name.lower() == destination.lower():
                     destination_stop = stop
+                
+                # If not found, try mapping for Blue Line stops
+                if not origin_stop:
+                    # Check if origin is a Blue Line shapefile stop that needs mapping
+                    mapped_origin = stops_db.map_stop_name_for_routes(origin, 'BLUE')
+                    if stop.name.lower() == mapped_origin.lower():
+                        origin_stop = stop
+                
+                if not destination_stop:
+                    # Check if destination is a Blue Line shapefile stop that needs mapping
+                    mapped_destination = stops_db.map_stop_name_for_routes(destination, 'BLUE')
+                    if stop.name.lower() == mapped_destination.lower():
+                        destination_stop = stop
             
             if origin_stop and destination_stop and origin_stop.sequence < destination_stop.sequence:
                 # Journey duration between those two stops
@@ -94,13 +106,17 @@ class RoutePlanner:
                     pseudo_wait = self.calculate_time_difference(time(6, 0), origin_stop.departure_time)
                     score = (pseudo_wait, journey_time)
                 
-                if score < best_score:
-                    best_score = score
-                    best_trip = trip
-                    best_origin_stop = origin_stop
-                    best_destination_stop = destination_stop
+                trip_options.append((score, trip, origin_stop, destination_stop))
         
-        return (best_trip, best_origin_stop, best_destination_stop) if best_trip else None
+        # Sort by score and return top trips
+        trip_options.sort(key=lambda x: x[0])
+        return [(trip, origin_stop, destination_stop) for _, trip, origin_stop, destination_stop in trip_options[:max_trips]]
+
+    def find_best_trip(self, route, origin: str, destination: str, 
+                   preferred_time: Optional[time] = None) -> Optional[Tuple[Trip, Stop, Stop]]:
+        """Find the best trip for a given route and stops (backwards compatibility)."""
+        trips = self.find_best_trips(route, origin, destination, preferred_time, max_trips=1)
+        return trips[0] if trips else None
 
     
     def plan_route(self, request: RoutePlanningRequest) -> List[RoutePlan]:
@@ -116,11 +132,12 @@ class RoutePlanner:
         route_plans: List[RoutePlan] = []
         
         for route_key, route in connecting_routes:
-            trip_info = self.find_best_trip(
-                route, request.origin, request.destination, request.preferred_time
+            # Get multiple trip options from this route
+            trip_options = self.find_best_trips(
+                route, request.origin, request.destination, request.preferred_time, max_trips=3
             )
-            print(f"trip_info: {trip_info}")  # fixed concat
-            if trip_info:
+            
+            for trip_info in trip_options:
                 trip, origin_stop, destination_stop = trip_info
                 
                 # Journey details
@@ -156,7 +173,6 @@ class RoutePlanner:
                     fwd = self.calculate_time_difference(request.preferred_time, origin_stop.departure_time)
                     bwd = self.calculate_time_difference(origin_stop.departure_time, request.preferred_time)
                     wait_time = min(fwd, bwd)
-                    print(f"wait_time: {wait_time}")  # fixed concat
                 
                 route_plan = RoutePlan(
                     origin=request.origin,

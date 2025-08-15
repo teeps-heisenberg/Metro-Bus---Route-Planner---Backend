@@ -35,7 +35,7 @@ class RouteParser:
                 info['direction'] = line.split('Direction')[-1].strip()
             elif 'Total Trips' in line:
                 info['total_trips'] = int(line.split('Total Trips')[-1].strip())
-            elif 'Average Headway' in line:
+            elif 'Average Headway (min)' in line:
                 headway_str = line.split('Average Headway (min)')[-1].strip()
                 info['average_headway'] = int(headway_str)
         
@@ -47,8 +47,9 @@ class RouteParser:
         current_trip = None
         current_stops = []
         
-        for line in lines:
-            line = line.strip()
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
             
             # Check for trip start (pattern: trip_id time)
             if re.match(r'\d+-\d+\s+\d{2}:\d{2}:\d{2}', line):
@@ -64,18 +65,31 @@ class RouteParser:
                 current_trip = Trip(trip_id=trip_id, start_time=start_time, stops=[])
                 current_stops = []
                 
-            # Check for stop information (pattern: stop_name arrival_time departure_time)
-            elif current_trip and len(line.split()) >= 3:
-                parts = line.split()
-                # Try to parse as stop information
-                try:
-                    # Find where times start (last two parts should be times)
-                    for i in range(len(parts) - 2):
+                # Skip the next line (stop_name arrival_time departure_time header)
+                i += 1
+                if i < len(lines) and 'stop_name' in lines[i]:
+                    i += 1
+                
+                # Parse stops until we hit another trip or end
+                while i < len(lines):
+                    line = lines[i].strip()
+                    
+                    # Check if this is a new trip
+                    if re.match(r'\d+-\d+\s+\d{2}:\d{2}:\d{2}', line):
+                        break
+                    
+                    # Parse stop information
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        # Last two parts should be times
                         time1 = parts[-2]
                         time2 = parts[-1]
+                        
                         if (re.match(r'\d{2}:\d{2}:\d{2}', time1) and 
                             re.match(r'\d{2}:\d{2}:\d{2}', time2)):
-                            stop_name = ' '.join(parts[:i+1])
+                            
+                            # Stop name is everything except the last two parts (times)
+                            stop_name = ' '.join(parts[:-2])
                             arrival_time = self.parse_time(time1)
                             departure_time = self.parse_time(time2)
                             
@@ -86,9 +100,13 @@ class RouteParser:
                                 sequence=len(current_stops) + 1
                             )
                             current_stops.append(stop)
-                            break
-                except:
-                    continue
+                    
+                    i += 1
+                
+                # Continue with the next trip
+                continue
+            
+            i += 1
         
         # Add last trip
         if current_trip and current_stops:
@@ -180,25 +198,49 @@ class RouteParser:
         routes = self.load_all_routes()
         connecting_routes = []
         
+        # Import stops_db for name mapping
+        from stops_database import stops_db
+        
         for route_key, route in routes.items():
-            origin_found = False
-            destination_found = False
-            origin_sequence = -1
-            destination_sequence = -1
+            route_connects = False
             
             for trip in route.trips:
+                origin_found = False
+                destination_found = False
+                origin_sequence = -1
+                destination_sequence = -1
+                
                 for stop in trip.stops:
+                    # Try exact match first
                     if stop.name.lower() == origin.lower():
                         origin_found = True
                         origin_sequence = stop.sequence
                     elif stop.name.lower() == destination.lower():
                         destination_found = True
                         destination_sequence = stop.sequence
+                    
+                    # If not found, try mapping for Blue Line stops
+                    if not origin_found:
+                        # Check if origin is a Blue Line shapefile stop that needs mapping
+                        mapped_origin = stops_db.map_stop_name_for_routes(origin, 'BLUE')
+                        if stop.name.lower() == mapped_origin.lower():
+                            origin_found = True
+                            origin_sequence = stop.sequence
+                    
+                    if not destination_found:
+                        # Check if destination is a Blue Line shapefile stop that needs mapping
+                        mapped_destination = stops_db.map_stop_name_for_routes(destination, 'BLUE')
+                        if stop.name.lower() == mapped_destination.lower():
+                            destination_found = True
+                            destination_sequence = stop.sequence
                 
                 if origin_found and destination_found:
                     # Check if direction is correct (origin should come before destination)
                     if origin_sequence < destination_sequence:
-                        connecting_routes.append((route_key, route))
-                    break
+                        route_connects = True
+                        break  # Found a working trip, no need to check more trips in this route
+            
+            if route_connects:
+                connecting_routes.append((route_key, route))
         
         return connecting_routes

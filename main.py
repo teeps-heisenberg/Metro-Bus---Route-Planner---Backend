@@ -16,6 +16,7 @@ from models import (
 )
 from route_planner import RoutePlanner
 from ai_assistant import AIAssistant
+from stops_database import stops_db
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -101,11 +102,11 @@ async def get_all_stops(metro_line: Optional[MetroLine] = Query(None, descriptio
     """Get all available stops, optionally filtered by metro line."""
     try:
         if metro_line:
-            # Use route planner for line-specific filtering (maintains route compatibility)
-            stops = route_planner.get_all_stops(metro_line.value)
+            # Use stops_db for line-specific filtering (uses hybrid approach: Green from JSON, Blue from shapefiles)
+            stops = stops_db.get_all_stops(metro_line.value)
         else:
-            # Use original route planner for all stops (maintains compatibility)
-            stops = route_planner.get_all_stops()
+            # Use stops_db for all stops (hybrid approach)
+            stops = stops_db.get_all_stops()
         
         return StopsResponse(
             success=True,
@@ -124,11 +125,11 @@ async def search_stops(
     """Search stops by name, optionally filtered by metro line."""
     try:
         if metro_line:
-            # Use route planner for line-specific filtering (maintains route compatibility)
-            stops = route_planner.search_stops(query, metro_line.value)
+            # Use stops_db for line-specific filtering (uses hybrid approach: Green from JSON, Blue from shapefiles)
+            stops = stops_db.search_stops(query, metro_line.value)
         else:
-            # Use original route planner for search (maintains compatibility)
-            stops = route_planner.search_stops(query)
+            # Use stops_db for search (hybrid approach)
+            stops = stops_db.search_stops(query)
         
         return {
             "success": True,
